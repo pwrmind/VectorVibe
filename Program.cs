@@ -341,44 +341,44 @@ public class VectorDatabase : IDisposable
         }
     }
 
-    public async Task<List<Guid>> SearchNearestAsync(float[] queryVector, int topK = 5)
+    public Task<List<Guid>> SearchNearestAsync(float[] queryVector, int topK = 5)
     {
-        bool lockTaken = false;
-        try
+        return Task.Run(() =>
         {
-            _lock.EnterReadLock();
-            lockTaken = true;
-            
-            return await Task.Run(() => 
+            bool lockTaken = false;
+            try
             {
+                _lock.EnterReadLock();
+                lockTaken = true;
+                
                 var indices = _index.SearchNearest(queryVector, topK);
                 return indices.Select(i => _vectors[i].Id).ToList();
-            });
-        }
-        finally
-        {
-            if (lockTaken) _lock.ExitReadLock();
-        }
+            }
+            finally
+            {
+                if (lockTaken) _lock.ExitReadLock();
+            }
+        });
     }
 
-    public async Task<List<(Guid Id, string Text)>> SearchNearestWithTextAsync(float[] queryVector, int topK = 5)
+    public Task<List<(Guid Id, string Text)>> SearchNearestWithTextAsync(float[] queryVector, int topK = 5)
     {
-        bool lockTaken = false;
-        try
+        return Task.Run(() =>
         {
-            _lock.EnterReadLock();
-            lockTaken = true;
-            
-            return await Task.Run(() => 
+            bool lockTaken = false;
+            try
             {
+                _lock.EnterReadLock();
+                lockTaken = true;
+                
                 var indices = _index.SearchNearest(queryVector, topK);
                 return indices.Select(i => (_vectors[i].Id, _vectors[i].Text)).ToList();
-            });
-        }
-        finally
-        {
-            if (lockTaken) _lock.ExitReadLock();
-        }
+            }
+            finally
+            {
+                if (lockTaken) _lock.ExitReadLock();
+            }
+        });
     }
 
     public int VectorCount
