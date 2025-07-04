@@ -1,4 +1,5 @@
-﻿using System.Security.Cryptography;
+﻿using System.Diagnostics;
+using System.Security.Cryptography;
 
 public class HnswIndex
 {
@@ -459,50 +460,129 @@ public class Crc32 : HashAlgorithm
     }
 }
 
-class Program
+class LoadTester
 {
     static async Task Main(string[] args)
     {
-        const string dbPath = "text_vectors.db";
+        const string dbPath = "load_test.db";
+        const int dimension = 128;
+        const int addThreads = 5;
+        const int searchThreads = 10;
+        const int addsPerThread = 1000;
+        const int searchesPerThread = 500;
         
+        // Очистка предыдущих файлов БД
+        if (File.Exists(dbPath)) File.Delete(dbPath);
+        if (File.Exists(dbPath + ".wal")) File.Delete(dbPath + ".wal");
+
+        using (var db = new VectorDatabase(dbPath, compress: true))
+        {
+            // Тестирование добавления векторов
+            var addStopwatch = Stopwatch.StartNew();
+            var addTasks = new List<Task>();
+            
+            for (int i = 0; i < addThreads; i++)
+            {
+                addTasks.Add(Task.Run(() => AddVectorsTask(db, addsPerThread, dimension, i)));
+            }
+
+            await Task.WhenAll(addTasks);
+            addStopwatch.Stop();
+            
+            Console.WriteLine($"Added {addThreads * addsPerThread} vectors in {addStopwatch.Elapsed.TotalSeconds:0.00} sec");
+            Console.WriteLine($"Add rate: {addThreads * addsPerThread / addStopwatch.Elapsed.TotalSeconds:0.00} vectors/sec\n");
+
+            // Тестирование поиска
+            var searchStopwatch = Stopwatch.StartNew();
+            var searchTasks = new List<Task>();
+            
+            for (int i = 0; i < searchThreads; i++)
+            {
+                searchTasks.Add(Task.Run(() => SearchVectorsTask(db, searchesPerThread, dimension)));
+            }
+
+            await Task.WhenAll(searchTasks);
+            searchStopwatch.Stop();
+            
+            Console.WriteLine($"Performed {searchThreads * searchesPerThread} searches in {searchStopwatch.Elapsed.TotalSeconds:0.00} sec");
+            Console.WriteLine($"Search rate: {searchThreads * searchesPerThread / searchStopwatch.Elapsed.TotalSeconds:0.00} searches/sec");
+            Console.WriteLine($"Total vectors in DB: {db.VectorCount}");
+        }
+    }
+
+    static void AddVectorsTask(VectorDatabase db, int count, int dimension, int threadId)
+    {
+        var random = new Random(threadId);
+        for (int i = 0; i < count; i++)
+        {
+            var vector = new float[dimension];
+            for (int j = 0; j < dimension; j++)
+            {
+                vector[j] = (float)random.NextDouble();
+            }
+            db.AddVector(vector, $"thread_{threadId}_vec_{i}");
+        }
+    }
+
+    static async Task SearchVectorsTask(VectorDatabase db, int count, int dimension)
+    {
+        var random = new Random();
+        for (int i = 0; i < count; i++)
+        {
+            var queryVector = new float[dimension];
+            for (int j = 0; j < dimension; j++)
+            {
+                queryVector[j] = (float)random.NextDouble();
+            }
+            await db.SearchNearestWithTextAsync(queryVector, topK: 5);
+        }
+    }
+}
+
+class Program
+{
+    static async Task MainV2(string[] args)
+    {
+        const string dbPath = "text_vectors.db";
+
         // Создаем и заполняем базу данных
         using (var db = new VectorDatabase(dbPath, compress: true))
         {
             Console.WriteLine("Adding documents to database...");
-            
-            db.AddVector(GetFakeEmbedding("The quick brown fox jumps over the lazy dog"), 
+
+            db.AddVector(GetFakeEmbedding("The quick brown fox jumps over the lazy dog"),
                          "The quick brown fox jumps over the lazy dog");
-            
-            db.AddVector(GetFakeEmbedding("Programming in C# is fun and efficient"), 
+
+            db.AddVector(GetFakeEmbedding("Programming in C# is fun and efficient"),
                          "Programming in C# is fun and efficient");
-            
-            db.AddVector(GetFakeEmbedding("Machine learning transforms modern applications"), 
+
+            db.AddVector(GetFakeEmbedding("Machine learning transforms modern applications"),
                          "Machine learning transforms modern applications");
-            
-            db.AddVector(GetFakeEmbedding("Paris is the capital city of France"), 
+
+            db.AddVector(GetFakeEmbedding("Paris is the capital city of France"),
                          "Paris is the capital city of France");
-            
-            db.AddVector(GetFakeEmbedding("Canine companions are man's best friends"), 
+
+            db.AddVector(GetFakeEmbedding("Canine companions are man's best friends"),
                          "Canine companions are man's best friends");
-            
+
             db.SaveToFile();
             Console.WriteLine($"Database saved with {db.VectorCount} records");
         }
-        
+
         // Загружаем базу данных
         using (var db = new VectorDatabase(dbPath, compress: true))
         {
             Console.WriteLine($"Database loaded with {db.VectorCount} records");
-            
+
             // Выполняем семантический поиск
             var query1 = "Dogs resting lazily";
             Console.WriteLine($"\nSearch: '{query1}'");
             await SearchAndPrintResults(db, query1);
-            
+
             var query2 = "Software development";
             Console.WriteLine($"\nSearch: '{query2}'");
             await SearchAndPrintResults(db, query2);
-            
+
             var query3 = "European capitals";
             Console.WriteLine($"\nSearch: '{query3}'");
             await SearchAndPrintResults(db, query3);
@@ -521,7 +601,7 @@ class Program
     {
         float[] queryVector = GetFakeEmbedding(query);
         var results = await db.SearchNearestWithTextAsync(queryVector, topK: 2);
-        
+
         foreach (var (id, text) in results)
         {
             Console.WriteLine($"- {text}");
