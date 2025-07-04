@@ -1,5 +1,8 @@
 ﻿using System.Diagnostics;
 using System.Security.Cryptography;
+using OllamaSharp;
+using OllamaSharp.Models;
+
 
 public class HnswIndex
 {
@@ -462,7 +465,7 @@ public class Crc32 : HashAlgorithm
 
 class LoadTester
 {
-    static async Task Main(string[] args)
+    static async Task MainV3(string[] args)
     {
         const string dbPath = "load_test.db";
         const int dimension = 128;
@@ -470,7 +473,7 @@ class LoadTester
         const int searchThreads = 10;
         const int addsPerThread = 1000;
         const int searchesPerThread = 500;
-        
+
         // Очистка предыдущих файлов БД
         if (File.Exists(dbPath)) File.Delete(dbPath);
         if (File.Exists(dbPath + ".wal")) File.Delete(dbPath + ".wal");
@@ -480,7 +483,7 @@ class LoadTester
             // Тестирование добавления векторов
             var addStopwatch = Stopwatch.StartNew();
             var addTasks = new List<Task>();
-            
+
             for (int i = 0; i < addThreads; i++)
             {
                 addTasks.Add(Task.Run(() => AddVectorsTask(db, addsPerThread, dimension, i)));
@@ -488,14 +491,14 @@ class LoadTester
 
             await Task.WhenAll(addTasks);
             addStopwatch.Stop();
-            
+
             Console.WriteLine($"Added {addThreads * addsPerThread} vectors in {addStopwatch.Elapsed.TotalSeconds:0.00} sec");
             Console.WriteLine($"Add rate: {addThreads * addsPerThread / addStopwatch.Elapsed.TotalSeconds:0.00} vectors/sec\n");
 
             // Тестирование поиска
             var searchStopwatch = Stopwatch.StartNew();
             var searchTasks = new List<Task>();
-            
+
             for (int i = 0; i < searchThreads; i++)
             {
                 searchTasks.Add(Task.Run(() => SearchVectorsTask(db, searchesPerThread, dimension)));
@@ -503,7 +506,7 @@ class LoadTester
 
             await Task.WhenAll(searchTasks);
             searchStopwatch.Stop();
-            
+
             Console.WriteLine($"Performed {searchThreads * searchesPerThread} searches in {searchStopwatch.Elapsed.TotalSeconds:0.00} sec");
             Console.WriteLine($"Search rate: {searchThreads * searchesPerThread / searchStopwatch.Elapsed.TotalSeconds:0.00} searches/sec");
             Console.WriteLine($"Total vectors in DB: {db.VectorCount}");
@@ -539,7 +542,7 @@ class LoadTester
     }
 }
 
-class Program
+class AddAndGetData
 {
     static async Task MainV2(string[] args)
     {
@@ -606,5 +609,78 @@ class Program
         {
             Console.WriteLine($"- {text}");
         }
+    }
+}
+
+class Program
+{
+    static async Task Main(string[] args)
+    {
+        const string dbPath = "semantic_search.db";
+        
+        // Инициализация клиента Ollama
+        var ollama = new OllamaApiClient("http://localhost:11434", "nomic-embed-text");
+        
+        // Создаем базу данных векторов
+        using var vectorDb = new VectorDatabase(dbPath, compress: true);
+        
+        // Добавляем документы в базу
+        var documents = new List<string>
+        {
+            "Москва - столица России",
+            "Париж - столица Франции",
+            "Токио - столица Японии",
+            "Программирование на C# - это мощь и простота",
+            "Искусственный интеллект меняет мир"
+        };
+
+        Console.WriteLine("Добавление документов в базу...");
+        foreach (var doc in documents)
+        {
+            // Генерируем эмбеддинг для документа
+            var embedding = await GenerateEmbeddingAsync(ollama, doc);
+            
+            // Добавляем в базу
+            vectorDb.AddVector(embedding, doc);
+        }
+        vectorDb.SaveToFile();
+        Console.WriteLine($"Добавлено документов: {vectorDb.VectorCount}");
+
+        // Поиск по базе
+        while (true)
+        {
+            Console.Write("\nВведите поисковый запрос: ");
+            var query = Console.ReadLine();
+            
+            if (string.IsNullOrWhiteSpace(query) || query.Equals("exit", StringComparison.OrdinalIgnoreCase))
+                break;
+
+            // Генерируем эмбеддинг для запроса
+            var queryEmbedding = await GenerateEmbeddingAsync(ollama, query);
+            
+            // Ищем похожие документы
+            var results = await vectorDb.SearchNearestWithTextAsync(queryEmbedding, topK: 3);
+            
+            Console.WriteLine("\nРезультаты поиска:");
+            foreach (var (id, text) in results)
+            {
+                Console.WriteLine($"- {text}");
+            }
+        }
+    }
+
+    static async Task<float[]> GenerateEmbeddingAsync(OllamaApiClient ollama, string text)
+    {
+        // Создаем запрос с ОДНИМ элементом в списке
+        var embedRequest = new EmbedRequest
+        {
+            Model = "nomic-embed-text",
+            Input = new List<string> { text } // Важно: передаем текст как список с одним элементом
+        };
+        
+        var embeddingResponse = await ollama.EmbedAsync(embedRequest);
+        
+        // Возвращаем первый эмбеддинг из списка
+        return embeddingResponse.Embeddings[0];
     }
 }
